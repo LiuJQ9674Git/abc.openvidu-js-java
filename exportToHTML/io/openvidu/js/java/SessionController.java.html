@@ -1,0 +1,210 @@
+<html>
+<head>
+<title>SessionController.java</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #000080; font-weight: bold;}
+.s1 { color: #000000;}
+.s2 { color: #008000; font-weight: bold;}
+.s3 { color: #808080; font-style: italic;}
+.s4 { color: #0000ff;}
+</style>
+</head>
+<body bgcolor="#ffffff">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#c0c0c0" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SessionController.java</font>
+</center></td></tr></table>
+<pre><span class="s0">package </span>io.openvidu.js.java;
+
+<span class="s0">import </span>java.util.Map;
+<span class="s0">import </span>java.util.concurrent.ConcurrentHashMap;
+
+<span class="s0">import </span>javax.servlet.http.HttpSession;
+
+<span class="s0">import </span>org.json.simple.JSONObject;
+<span class="s0">import </span>org.json.simple.parser.JSONParser;
+<span class="s0">import </span>org.json.simple.parser.ParseException;
+<span class="s0">import </span>org.springframework.beans.factory.annotation.Value;
+<span class="s0">import </span>org.springframework.http.HttpStatus;
+<span class="s0">import </span>org.springframework.http.ResponseEntity;
+<span class="s0">import </span>org.springframework.web.bind.annotation.RequestBody;
+<span class="s0">import </span>org.springframework.web.bind.annotation.RequestMapping;
+<span class="s0">import </span>org.springframework.web.bind.annotation.RequestMethod;
+<span class="s0">import </span>org.springframework.web.bind.annotation.RestController;
+
+<span class="s0">import </span>io.openvidu.java.client.OpenVidu;
+<span class="s0">import </span>io.openvidu.java.client.OpenViduHttpException;
+<span class="s0">import </span>io.openvidu.java.client.OpenViduJavaClientException;
+<span class="s0">import </span>io.openvidu.java.client.OpenViduRole;
+<span class="s0">import </span>io.openvidu.java.client.Session;
+<span class="s0">import </span>io.openvidu.java.client.TokenOptions;
+
+@RestController
+@RequestMapping(<span class="s2">&quot;/api-sessions&quot;</span>)
+<span class="s0">public class </span>SessionController {
+
+	<span class="s3">// OpenVidu object as entrypoint of the SDK</span>
+	<span class="s0">private </span>OpenVidu openVidu;
+
+	<span class="s3">// Collection to pair session names and OpenVidu Session objects</span>
+	<span class="s0">private </span>Map&lt;String, Session&gt; mapSessions = <span class="s0">new </span>ConcurrentHashMap&lt;&gt;();
+	<span class="s3">// Collection to pair session names and tokens (the inner Map pairs tokens and</span>
+	<span class="s3">// role associated)</span>
+	<span class="s0">private </span>Map&lt;String, Map&lt;String, OpenViduRole&gt;&gt; mapSessionNamesTokens = <span class="s0">new </span>ConcurrentHashMap&lt;&gt;();
+
+	<span class="s3">// URL where our OpenVidu server is listening</span>
+	<span class="s0">private </span>String OPENVIDU_URL;
+	<span class="s3">// Secret shared with our OpenVidu server</span>
+	<span class="s0">private </span>String SECRET;
+
+	<span class="s0">public </span>SessionController(@Value(<span class="s2">&quot;${openvidu.secret}&quot;</span>) String secret,
+							 @Value(<span class="s2">&quot;${openvidu.url}&quot;</span>) String openviduUrl) {
+		<span class="s0">this</span>.SECRET = secret;
+		<span class="s0">this</span>.OPENVIDU_URL = openviduUrl;
+		<span class="s0">this</span>.openVidu = <span class="s0">new </span>OpenVidu(OPENVIDU_URL, SECRET);
+	}
+
+	@RequestMapping(value = <span class="s2">&quot;/get-token&quot;</span>, method = RequestMethod.POST)
+	<span class="s0">public </span>ResponseEntity&lt;JSONObject&gt; getToken(@RequestBody String sessionNameParam, HttpSession httpSession)
+			<span class="s0">throws </span>ParseException {
+
+		<span class="s0">try </span>{
+			checkUserLogged(httpSession);
+		} <span class="s0">catch </span>(Exception e) {
+			<span class="s0">return </span>getErrorResponse(e);
+		}
+		System.out.println(<span class="s2">&quot;Getting a token from OpenVidu Server | {sessionName}=&quot; </span>+ sessionNameParam);
+
+		JSONObject sessionJSON = (JSONObject) <span class="s0">new </span>JSONParser().parse(sessionNameParam);
+
+		<span class="s3">// The video-call to connect</span>
+		String sessionName = (String) sessionJSON.get(<span class="s2">&quot;sessionName&quot;</span>);
+
+		<span class="s3">// Role associated to this user</span>
+		OpenViduRole role = LoginController.users.get(httpSession.getAttribute(<span class="s2">&quot;loggedUser&quot;</span>)).role;
+
+		<span class="s3">// Optional data to be passed to other users when this user connects to the</span>
+		<span class="s3">// video-call. In this case, a JSON with the value we stored in the HttpSession</span>
+		<span class="s3">// object on login</span>
+		String serverData = <span class="s2">&quot;{</span><span class="s0">\&quot;</span><span class="s2">serverData</span><span class="s0">\&quot;</span><span class="s2">: </span><span class="s0">\&quot;</span><span class="s2">&quot; </span>+ httpSession.getAttribute(<span class="s2">&quot;loggedUser&quot;</span>) + <span class="s2">&quot;</span><span class="s0">\&quot;</span><span class="s2">}&quot;</span>;
+
+		<span class="s3">// Build tokenOptions object with the serverData and the role</span>
+		TokenOptions tokenOptions = <span class="s0">new </span>TokenOptions.Builder().data(serverData).role(role).build();
+
+		JSONObject responseJson = <span class="s0">new </span>JSONObject();
+
+		<span class="s0">if </span>(<span class="s0">this</span>.mapSessions.get(sessionName) != <span class="s0">null</span>) {
+			<span class="s3">// Session already exists</span>
+			System.out.println(<span class="s2">&quot;Existing session &quot; </span>+ sessionName);
+			<span class="s0">try </span>{
+
+				<span class="s3">// Generate a new token with the recently created tokenOptions</span>
+				String token = <span class="s0">this</span>.mapSessions.get(sessionName).generateToken(tokenOptions);
+
+				<span class="s3">// Update our collection storing the new token</span>
+				<span class="s0">this</span>.mapSessionNamesTokens.get(sessionName).put(token, role);
+
+				<span class="s3">// Prepare the response with the token</span>
+				responseJson.put(<span class="s4">0</span>, token);
+
+				<span class="s3">// Return the response to the client</span>
+				<span class="s0">return new </span>ResponseEntity&lt;&gt;(responseJson, HttpStatus.OK);
+			} <span class="s0">catch </span>(OpenViduJavaClientException e1) {
+				<span class="s3">// If internal error generate an error message and return it to client</span>
+				<span class="s0">return </span>getErrorResponse(e1);
+			} <span class="s0">catch </span>(OpenViduHttpException e2) {
+				<span class="s0">if </span>(<span class="s4">404 </span>== e2.getStatus()) {
+					<span class="s3">// Invalid sessionId (user left unexpectedly). Session object is not valid</span>
+					<span class="s3">// anymore. Clean collections and continue as new session</span>
+					<span class="s0">this</span>.mapSessions.remove(sessionName);
+					<span class="s0">this</span>.mapSessionNamesTokens.remove(sessionName);
+				}
+			}
+		}
+
+		<span class="s3">// New session</span>
+		System.out.println(<span class="s2">&quot;New session &quot; </span>+ sessionName);
+		<span class="s0">try </span>{
+
+			<span class="s3">// Create a new OpenVidu Session</span>
+			Session session = <span class="s0">this</span>.openVidu.createSession();
+			<span class="s3">// Generate a new token with the recently created tokenOptions</span>
+			String token = session.generateToken(tokenOptions);
+
+			<span class="s3">// Store the session and the token in our collections</span>
+			<span class="s0">this</span>.mapSessions.put(sessionName, session);
+			<span class="s0">this</span>.mapSessionNamesTokens.put(sessionName, <span class="s0">new </span>ConcurrentHashMap&lt;&gt;());
+			<span class="s0">this</span>.mapSessionNamesTokens.get(sessionName).put(token, role);
+
+			<span class="s3">// Prepare the response with the token</span>
+			responseJson.put(<span class="s4">0</span>, token);
+
+			<span class="s3">// Return the response to the client</span>
+			<span class="s0">return new </span>ResponseEntity&lt;&gt;(responseJson, HttpStatus.OK);
+
+		} <span class="s0">catch </span>(Exception e) {
+			<span class="s3">// If error generate an error message and return it to client</span>
+			<span class="s0">return </span>getErrorResponse(e);
+		}
+	}
+
+	@RequestMapping(value = <span class="s2">&quot;/remove-user&quot;</span>, method = RequestMethod.POST)
+	<span class="s0">public </span>ResponseEntity&lt;JSONObject&gt; removeUser(@RequestBody String sessionNameToken, HttpSession httpSession)
+			<span class="s0">throws </span>Exception {
+
+		<span class="s0">try </span>{
+			checkUserLogged(httpSession);
+		} <span class="s0">catch </span>(Exception e) {
+			<span class="s0">return </span>getErrorResponse(e);
+		}
+		System.out.println(<span class="s2">&quot;Removing user | {sessionName, token}=&quot; </span>+ sessionNameToken);
+
+		<span class="s3">// Retrieve the params from BODY</span>
+		JSONObject sessionNameTokenJSON = (JSONObject) <span class="s0">new </span>JSONParser().parse(sessionNameToken);
+		String sessionName = (String) sessionNameTokenJSON.get(<span class="s2">&quot;sessionName&quot;</span>);
+		String token = (String) sessionNameTokenJSON.get(<span class="s2">&quot;token&quot;</span>);
+
+		<span class="s3">// If the session exists</span>
+		<span class="s0">if </span>(<span class="s0">this</span>.mapSessions.get(sessionName) != <span class="s0">null </span>&amp;&amp; <span class="s0">this</span>.mapSessionNamesTokens.get(sessionName) != <span class="s0">null</span>) {
+
+			<span class="s3">// If the token exists</span>
+			<span class="s0">if </span>(<span class="s0">this</span>.mapSessionNamesTokens.get(sessionName).remove(token) != <span class="s0">null</span>) {
+				<span class="s3">// User left the session</span>
+				<span class="s0">if </span>(<span class="s0">this</span>.mapSessionNamesTokens.get(sessionName).isEmpty()) {
+					<span class="s3">// Last user left: session must be removed</span>
+					<span class="s0">this</span>.mapSessions.remove(sessionName);
+				}
+				<span class="s0">return new </span>ResponseEntity&lt;&gt;(HttpStatus.OK);
+			} <span class="s0">else </span>{
+				<span class="s3">// The TOKEN wasn't valid</span>
+				System.out.println(<span class="s2">&quot;Problems in the app server: the TOKEN wasn't valid&quot;</span>);
+				<span class="s0">return new </span>ResponseEntity&lt;&gt;(HttpStatus.INTERNAL_SERVER_ERROR);
+			}
+
+		} <span class="s0">else </span>{
+			<span class="s3">// The SESSION does not exist</span>
+			System.out.println(<span class="s2">&quot;Problems in the app server: the SESSION does not exist&quot;</span>);
+			<span class="s0">return new </span>ResponseEntity&lt;&gt;(HttpStatus.INTERNAL_SERVER_ERROR);
+		}
+	}
+
+	<span class="s0">private </span>ResponseEntity&lt;JSONObject&gt; getErrorResponse(Exception e) {
+		JSONObject json = <span class="s0">new </span>JSONObject();
+		json.put(<span class="s2">&quot;cause&quot;</span>, e.getCause());
+		json.put(<span class="s2">&quot;error&quot;</span>, e.getMessage());
+		json.put(<span class="s2">&quot;exception&quot;</span>, e.getClass());
+		<span class="s0">return new </span>ResponseEntity&lt;&gt;(json, HttpStatus.INTERNAL_SERVER_ERROR);
+	}
+
+	<span class="s0">private void </span>checkUserLogged(HttpSession httpSession) <span class="s0">throws </span>Exception {
+		<span class="s0">if </span>(httpSession == <span class="s0">null </span>|| httpSession.getAttribute(<span class="s2">&quot;loggedUser&quot;</span>) == <span class="s0">null</span>) {
+			<span class="s0">throw new </span>Exception(<span class="s2">&quot;User not logged&quot;</span>);
+		}
+	}
+
+}
+</pre>
+</body>
+</html>

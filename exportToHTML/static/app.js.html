@@ -1,0 +1,326 @@
+<html>
+<head>
+<title>app.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #000080; font-weight: bold;}
+.s1 { color: #000000;}
+.s2 { color: #808080; font-style: italic;}
+.s3 { color: #008000; font-weight: bold;}
+.s4 { color: #0000ff;}
+</style>
+</head>
+<body bgcolor="#ffffff">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#c0c0c0" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+app.js</font>
+</center></td></tr></table>
+<pre><span class="s0">var </span>OV;
+<span class="s0">var </span>session;
+
+<span class="s0">var </span>sessionName;	<span class="s2">// Name of the video session the user will connect to</span>
+<span class="s0">var </span>token;			<span class="s2">// Token retrieved from OpenVidu Server</span>
+
+<span class="s2">/* OPENVIDU METHODS */</span>
+<span class="s2">// 点击事件调用</span>
+<span class="s0">function </span>joinSession() {
+    <span class="s2">// 获取Token，回调方法执行: (token) =&gt; {}</span>
+	getToken((token) =&gt; {
+
+		<span class="s2">// --- 1) Get an OpenVidu object ---</span>
+        <span class="s2">// 实例化OpenVidu</span>
+		OV = <span class="s0">new </span>OpenVidu();
+
+		<span class="s2">// --- 2) Init a session ---</span>
+        <span class="s2">// 初始化会话</span>
+		session = OV.initSession();
+
+		<span class="s2">// --- 3) Specify the actions when events take place in the session ---</span>
+        <span class="s2">// 当在会话中发生事件，执行的具体动作</span>
+		<span class="s2">// On every new Stream received...</span>
+		<span class="s2">// 媒体流到达事件</span>
+		session.on(<span class="s3">'streamCreated'</span>, (event) =&gt; {
+
+			<span class="s2">// Subscribe to the Stream to receive it</span>
+			<span class="s2">// HTML video will be appended to element with 'video-container' id</span>
+			<span class="s2">// 从事件中获取流，并在H5的video-container标签中显示</span>
+			<span class="s0">var </span>subscriber = session.subscribe(event.stream, <span class="s3">'video-container'</span>);
+
+			<span class="s2">// When the HTML video has been appended to DOM...</span>
+			subscriber.on(<span class="s3">'videoElementCreated'</span>, (event) =&gt; {
+
+				<span class="s2">// Add a new HTML element for the user's name and nickname over its video</span>
+				appendUserData(event.element, subscriber.stream.connection);
+			});
+		});
+
+		<span class="s2">// On every Stream destroyed...</span>
+		<span class="s2">// 流销毁事件</span>
+		session.on(<span class="s3">'streamDestroyed'</span>, (event) =&gt; {
+			<span class="s2">// Delete the HTML element with the user's name and nickname</span>
+			removeUserData(event.stream.connection);
+		});
+
+		<span class="s2">// --- 4) Connect to the session passing the retrieved token and some more data from</span>
+		<span class="s2">//        the client (in this case a JSON with the nickname chosen by the user) ---</span>
+        <span class="s2">//</span>
+		<span class="s0">var </span>nickName = $(<span class="s3">&quot;#nickName&quot;</span>).val();
+		session.connect(token, { clientData: nickName })
+			.then(() =&gt; {
+
+				<span class="s2">// --- 5) Set page layout for active call ---</span>
+
+				<span class="s0">var </span>userName = $(<span class="s3">&quot;#user&quot;</span>).val();
+				$(<span class="s3">'#session-title'</span>).text(sessionName);
+				$(<span class="s3">'#join'</span>).hide();
+				$(<span class="s3">'#session'</span>).show();
+
+
+				<span class="s2">// Here we check somehow if the user has 'PUBLISHER' role before</span>
+				<span class="s2">// trying to publish its stream. Even if someone modified the client's code and</span>
+				<span class="s2">// published the stream, it wouldn't work if the token sent in Session.connect</span>
+				<span class="s2">// method is not recognized as 'PUBLIHSER' role by OpenVidu Server</span>
+				<span class="s0">if </span>(isPublisher(userName)) {
+
+					<span class="s2">// --- 6) Get your own camera stream ---</span>
+                    <span class="s2">// 本身的摄像头流，为发布者</span>
+					<span class="s0">var </span>publisher = OV.initPublisher(<span class="s3">'video-container'</span>, {
+						audioSource: undefined, <span class="s2">// The source of audio. If undefined default microphone</span>
+						videoSource: undefined, <span class="s2">// The source of video. If undefined default webcam</span>
+						publishAudio: <span class="s0">true</span>,  	<span class="s2">// Whether you want to start publishing with your audio unmuted or not</span>
+						publishVideo: <span class="s0">true</span>,  	<span class="s2">// Whether you want to start publishing with your video enabled or not</span>
+						resolution: <span class="s3">'640x480'</span>,  <span class="s2">// The resolution of your video</span>
+						frameRate: <span class="s4">30</span>,			<span class="s2">// The frame rate of your video</span>
+						insertMode: <span class="s3">'APPEND'</span>,	<span class="s2">// How the video is inserted in the target element 'video-container'</span>
+						mirror: <span class="s0">false       	</span><span class="s2">// Whether to mirror your local video or not</span>
+					});
+
+					<span class="s2">// --- 7) Specify the actions when events take place in our publisher ---</span>
+
+					<span class="s2">// When our HTML video has been added to DOM...</span>
+					publisher.on(<span class="s3">'videoElementCreated'</span>, (event) =&gt; {
+						<span class="s2">// Init the main video with ours and append our data</span>
+						<span class="s0">var </span>userData = {
+							nickName: nickName,
+							userName: userName
+						};
+						<span class="s2">// 主媒体数据</span>
+						initMainVideo(event.element, userData);
+						<span class="s2">// 用户数据</span>
+						appendUserData(event.element, userData);
+						$(event.element).prop(<span class="s3">'muted'</span>, <span class="s0">true</span>); <span class="s2">// Mute local video</span>
+					});
+
+
+					<span class="s2">// --- 8) Publish your stream ---</span>
+                    <span class="s2">// 发布媒体流</span>
+					session.publish(publisher);
+
+				} <span class="s0">else </span>{
+					console.warn(<span class="s3">'You don</span><span class="s0">\'</span><span class="s3">t have permissions to publish'</span>);
+					initMainVideoThumbnail(); <span class="s2">// Show SUBSCRIBER message in main video</span>
+				}
+			})
+			.<span class="s0">catch</span>(error =&gt; {
+				console.warn(<span class="s3">'There was an error connecting to the session:'</span>, error.code, error.message);
+			});
+	});
+
+	<span class="s0">return false</span>;
+}
+
+<span class="s0">function </span>leaveSession() {
+
+	<span class="s2">// --- 9) Leave the session by calling 'disconnect' method over the Session object ---</span>
+
+	session.disconnect();
+	session = <span class="s0">null</span>;
+
+	<span class="s2">// Removing all HTML elements with the user's nicknames</span>
+	cleanSessionView();
+
+	$(<span class="s3">'#join'</span>).show();
+	$(<span class="s3">'#session'</span>).hide();
+}
+
+<span class="s2">/* OPENVIDU METHODS */</span>
+
+
+
+<span class="s2">/* APPLICATION REST METHODS */</span>
+
+<span class="s0">function </span>logIn() {
+	<span class="s0">var </span>user = $(<span class="s3">&quot;#user&quot;</span>).val(); <span class="s2">// Username</span>
+	<span class="s0">var </span>pass = $(<span class="s3">&quot;#pass&quot;</span>).val(); <span class="s2">// Password</span>
+
+	httpPostRequest(
+		<span class="s3">'api-login/login'</span>,
+		{user: user, pass: pass},
+		<span class="s3">'Login WRONG'</span>,
+		(response) =&gt; {
+			$(<span class="s3">&quot;#name-user&quot;</span>).text(user);
+			$(<span class="s3">&quot;#not-logged&quot;</span>).hide();
+			$(<span class="s3">&quot;#logged&quot;</span>).show();
+			<span class="s2">// Random nickName and session</span>
+			$(<span class="s3">&quot;#sessionName&quot;</span>).val(<span class="s3">&quot;Session &quot; </span>+ Math.floor(Math.random() * <span class="s4">10</span>));
+			$(<span class="s3">&quot;#nickName&quot;</span>).val(<span class="s3">&quot;Participant &quot; </span>+ Math.floor(Math.random() * <span class="s4">100</span>));
+		}
+	);
+}
+
+<span class="s0">function </span>logOut() {
+	httpPostRequest(
+		<span class="s3">'api-login/logout'</span>,
+		{},
+		<span class="s3">'Logout WRONG'</span>,
+		(response) =&gt; {
+			$(<span class="s3">&quot;#not-logged&quot;</span>).show();
+			$(<span class="s3">&quot;#logged&quot;</span>).hide();
+		}
+	);
+}
+
+<span class="s0">function </span>getToken(callback) {
+	sessionName = $(<span class="s3">&quot;#sessionName&quot;</span>).val(); <span class="s2">// Video-call chosen by the user</span>
+
+	httpPostRequest(
+		<span class="s3">'api-sessions/get-token'</span>,
+		{sessionName: sessionName},
+		<span class="s3">'Request of TOKEN gone WRONG:'</span>,
+		(response) =&gt; {
+			token = response[<span class="s4">0</span>]; <span class="s2">// Get token from response</span>
+			console.warn(<span class="s3">'Request of TOKEN gone WELL (TOKEN:' </span>+ token + <span class="s3">')'</span>);
+			callback(token); <span class="s2">// Continue the join operation</span>
+		}
+	);
+}
+
+<span class="s0">function </span>removeUser() {
+	httpPostRequest(
+		<span class="s3">'api-sessions/remove-user'</span>,
+		{sessionName: sessionName, token: token},
+		<span class="s3">'User couldn</span><span class="s0">\'</span><span class="s3">t be removed from session'</span>, 
+		(response) =&gt; {
+			console.warn(<span class="s3">&quot;You have been removed from session &quot; </span>+ sessionName);
+		}
+	);
+}
+
+<span class="s0">function </span>httpPostRequest(url, body, errorMsg, callback) {
+	<span class="s0">var </span>http = <span class="s0">new </span>XMLHttpRequest();
+	http.open(<span class="s3">'POST'</span>, url, <span class="s0">true</span>);
+	http.setRequestHeader(<span class="s3">'Content-type'</span>, <span class="s3">'application/json'</span>);
+	http.addEventListener(<span class="s3">'readystatechange'</span>, processRequest, <span class="s0">false</span>);
+	http.send(JSON.stringify(body));
+
+	<span class="s0">function </span>processRequest() {
+		<span class="s0">if </span>(http.readyState == <span class="s4">4</span>) {
+			<span class="s0">if </span>(http.status == <span class="s4">200</span>) {
+				<span class="s0">try </span>{
+					callback(JSON.parse(http.responseText));
+				} <span class="s0">catch </span>(e) {
+					callback();
+				}
+			} <span class="s0">else </span>{
+				console.warn(errorMsg);
+				console.warn(http.responseText);
+			}
+		}
+	}
+}
+
+<span class="s2">/* APPLICATION REST METHODS */</span>
+
+
+
+<span class="s2">/* APPLICATION BROWSER METHODS */</span>
+
+window.onbeforeunload = () =&gt; { <span class="s2">// Gracefully leave session</span>
+	<span class="s0">if </span>(session) {
+		removeUser();
+		leaveSession();
+	}
+}
+
+<span class="s2">// 用户订阅的媒体数据显示</span>
+<span class="s0">function </span>appendUserData(videoElement, connection) {
+	<span class="s0">var </span>clientData;
+	<span class="s0">var </span>serverData;
+	<span class="s0">var </span>nodeId;
+	<span class="s0">if </span>(connection.nickName) { <span class="s2">// Appending local video data</span>
+		clientData = connection.nickName;
+		serverData = connection.userName;
+		nodeId = <span class="s3">'main-videodata'</span>;
+	} <span class="s0">else </span>{
+		clientData = JSON.parse(connection.data.split(<span class="s3">'%/%'</span>)[<span class="s4">0</span>]).clientData;
+		serverData = JSON.parse(connection.data.split(<span class="s3">'%/%'</span>)[<span class="s4">1</span>]).serverData;
+		nodeId = connection.connectionId;
+	}
+	<span class="s0">var </span>dataNode = document.createElement(<span class="s3">'div'</span>);
+	dataNode.className = <span class="s3">&quot;data-node&quot;</span>;
+	dataNode.id = <span class="s3">&quot;data-&quot; </span>+ nodeId;
+	dataNode.innerHTML = <span class="s3">&quot;&lt;p class='nickName'&gt;&quot; </span>+ clientData + <span class="s3">&quot;&lt;/p&gt;&lt;p class='userName'&gt;&quot; </span>+ serverData + <span class="s3">&quot;&lt;/p&gt;&quot;</span>;
+	videoElement.parentNode.insertBefore(dataNode, videoElement.nextSibling);
+	<span class="s2">//加入视频流</span>
+	addClickListener(videoElement, clientData, serverData);
+}
+
+<span class="s0">function </span>removeUserData(connection) {
+	<span class="s0">var </span>userNameRemoved = $(<span class="s3">&quot;#data-&quot; </span>+ connection.connectionId);
+	<span class="s0">if </span>($(userNameRemoved).find(<span class="s3">'p.userName'</span>).html() === $(<span class="s3">'#main-video p.userName'</span>).html()) {
+		cleanMainVideo(); <span class="s2">// The participant focused in the main video has left</span>
+	}
+	$(<span class="s3">&quot;#data-&quot; </span>+ connection.connectionId).remove();
+}
+
+<span class="s0">function </span>removeAllUserData() {
+	$(<span class="s3">&quot;.data-node&quot;</span>).remove();
+}
+
+<span class="s0">function </span>cleanMainVideo() {
+	$(<span class="s3">'#main-video video'</span>).get(<span class="s4">0</span>).srcObject = <span class="s0">null</span>;
+	$(<span class="s3">'#main-video p'</span>).each(<span class="s0">function </span>() {
+		$(<span class="s0">this</span>).html(<span class="s3">''</span>);
+	});
+}
+
+<span class="s0">function </span>addClickListener(videoElement, clientData, serverData) {
+	videoElement.addEventListener(<span class="s3">'click'</span>, <span class="s0">function </span>() {
+		<span class="s0">var </span>mainVideo = $(<span class="s3">'#main-video video'</span>).get(<span class="s4">0</span>);
+		<span class="s0">if </span>(mainVideo.srcObject !== videoElement.srcObject) {
+			$(<span class="s3">'#main-video'</span>).fadeOut(<span class="s3">&quot;fast&quot;</span>, () =&gt; {
+				$(<span class="s3">'#main-video p.nickName'</span>).html(clientData);
+				$(<span class="s3">'#main-video p.userName'</span>).html(serverData);
+				mainVideo.srcObject = videoElement.srcObject;
+				$(<span class="s3">'#main-video'</span>).fadeIn(<span class="s3">&quot;fast&quot;</span>);
+			});
+		}
+	});
+}
+
+<span class="s2">// 设置</span>
+<span class="s0">function </span>initMainVideo(videoElement, userData) {
+	$(<span class="s3">'#main-video video'</span>).get(<span class="s4">0</span>).srcObject = videoElement.srcObject;
+	$(<span class="s3">'#main-video p.nickName'</span>).html(userData.nickName);
+	$(<span class="s3">'#main-video p.userName'</span>).html(userData.userName);
+	$(<span class="s3">'#main-video video'</span>).prop(<span class="s3">'muted'</span>, <span class="s0">true</span>);
+}
+
+<span class="s0">function </span>initMainVideoThumbnail() {
+	$(<span class="s3">'#main-video video'</span>).css(<span class="s3">&quot;background&quot;</span>, <span class="s3">&quot;url('images/subscriber-msg.jpg') round&quot;</span>);
+}
+
+<span class="s0">function </span>isPublisher(userName) {
+	<span class="s0">return </span>userName.includes(<span class="s3">'publisher'</span>);
+}
+
+<span class="s0">function </span>cleanSessionView() {
+	removeAllUserData();
+	cleanMainVideo();
+	$(<span class="s3">'#main-video video'</span>).css(<span class="s3">&quot;background&quot;</span>, <span class="s3">&quot;&quot;</span>);
+}
+
+<span class="s2">/* APPLICATION BROWSER METHODS */</span></pre>
+</body>
+</html>
